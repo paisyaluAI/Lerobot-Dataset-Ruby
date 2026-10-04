@@ -39,10 +39,29 @@ python_code = <<~PY
   print("state", sample["state"])
 PY
 
-venv_activate = File.expand_path('../.venv/bin/activate', __dir__)
+# Python実行環境の解決 (同階層のlerobotやConda環境、venvに対応)
+sibling_lerobot = File.expand_path('../../lerobot/src', __dir__)
+python_bin = nil
+env_setup = ""
+
+if File.exist?(File.expand_path('../.venv/bin/activate', __dir__))
+  env_setup = ". \"#{File.expand_path('../.venv/bin/activate', __dir__)}\" && "
+  python_bin = "python"
+elsif File.executable?(File.expand_path('../../miniforge3/envs/lerobot/bin/python', __dir__))
+  python_bin = File.expand_path('../../miniforge3/envs/lerobot/bin/python', __dir__)
+elsif File.executable?(File.expand_path('~/miniforge3/envs/lerobot/bin/python'))
+  python_bin = File.expand_path('~/miniforge3/envs/lerobot/bin/python')
+elsif ENV['CONDA_PREFIX'] && File.executable?(File.join(ENV['CONDA_PREFIX'], 'bin', 'python'))
+  python_bin = File.join(ENV['CONDA_PREFIX'], 'bin', 'python')
+else
+  python_bin = "python3"
+end
+
+python_path_export = File.directory?(sibling_lerobot) ? "export PYTHONPATH=\"#{sibling_lerobot}:$PYTHONPATH\" && " : ""
+
 system(
   'bash', '-lc',
-  "cd #{File.expand_path('..', __dir__)} && . \"#{venv_activate}\" && python - <<'PY'\n#{python_code}\nPY"
+  "cd #{File.expand_path('..', __dir__)} && #{env_setup}#{python_path_export}#{python_bin} - <<'PY'\n#{python_code}\nPY"
 )
 
 exit($?.exitstatus)
