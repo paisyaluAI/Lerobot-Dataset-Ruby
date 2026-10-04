@@ -2,7 +2,7 @@
 
 Gem::Specification.new do |spec|
   spec.name = "Lerobot-Dataset-Ruby"
-  spec.version = "1.0.0"
+  spec.version = "1.0.1"
   spec.authors = ["PaisyaluAI"]
   spec.email = ["h9265768hello@gmail.com"]
 
