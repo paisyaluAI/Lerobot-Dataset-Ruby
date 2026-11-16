@@ -40,7 +40,7 @@ python_code = <<~PY
 PY
 
 # Python実行環境の解決 (同階層のlerobotやConda環境、venvに対応)
-sibling_lerobot = File.expand_path('../../lerobot/src', __dir__)
+sibling_lerobot = File.expand_path('../../../third_party/lerobot/src', __dir__)
 python_bin = nil
 env_setup = ""
 
