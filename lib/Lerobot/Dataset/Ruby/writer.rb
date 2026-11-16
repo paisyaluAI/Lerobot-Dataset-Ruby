@@ -7,12 +7,16 @@ require 'parquet'
 module Lerobot
   module Dataset
     module Ruby
+      # 任意次元 (N次元) の action / state ベクトルを LeRobotDataset v3.0 形式で記録するクラス。
+      # 2輪/4WD・多関節アーム等のハードウェア固有定義を持たず、渡された配列の次元数に自動対応する。
       class Writer
-        attr_reader :output_dir, :fps
+        attr_reader :output_dir, :fps, :action_names, :state_names
 
-        def initialize(output_dir:, fps: 30, tasks: nil)
+        def initialize(output_dir:, fps: 30, tasks: nil, action_names: nil, state_names: nil)
           @output_dir = File.expand_path(output_dir)
           @fps = fps
+          @action_names = action_names&.map(&:to_s)
+          @state_names = state_names&.map(&:to_s)
           @episodes = []
           @all_frames = []
           @task_map = {}
@@ -59,10 +63,24 @@ module Lerobot
           task_index(task)
         end
 
-        # フレームを追加（現在のエピソードに）
+        # フレームを追加（action, state は任意次元 N の数値配列または Hash）
         def add_frame(action:, state:, image_bytes: nil, timestamp: nil)
           unless @current_episode
             raise RuntimeError, "start_episodeを最初に呼び出してください"
+          end
+
+          normalized_action = coerce_vector(action, @action_names)
+          normalized_state = coerce_vector(state, @state_names)
+
+          if @all_frames.any?
+            expected_action_dim = @all_frames.first[:action].size
+            expected_state_dim = @all_frames.first[:state].size
+            unless normalized_action.size == expected_action_dim
+              raise ArgumentError, "action の次元数が一致しません (期待: #{expected_action_dim}, 実際: #{normalized_action.size})"
+            end
+            unless normalized_state.size == expected_state_dim
+              raise ArgumentError, "state の次元数が一致しません (期待: #{expected_state_dim}, 実際: #{normalized_state.size})"
+            end
           end
 
           episode_frame_index = @all_frames.length - @current_episode[:from_index]
@@ -71,13 +89,12 @@ module Lerobot
             episode_index: @current_episode[:episode_index],
             frame_index: @next_video_frame_index,
             task_index: task_index(@current_episode[:task]),
-            action: action,
-            state: state,
+            action: normalized_action,
+            state: normalized_state,
             timestamp: timestamp || episode_frame_index.to_f / @fps
           }
 
           if image_bytes
-            # 録画中ならLibopencvに書き込み
             raise RuntimeError, "録画が開始されていません" unless @recording
             Libopencv.write_frame(image_bytes)
           end
@@ -88,9 +105,7 @@ module Lerobot
 
         # エピソードを保存（save: false なら動画だけ残してデータセットから除外）
         def save_episode(save: true)
-          unless @current_episode
-            return
-          end
+          return unless @current_episode
 
           episode = @current_episode
 
@@ -131,9 +146,7 @@ module Lerobot
 
         # 最終保存（Parquet書き込み）
         def save
-          if @current_episode
-            save_episode
-          end
+          save_episode if @current_episode
 
           ensure_default_video_file
           write_info_json
@@ -146,6 +159,21 @@ module Lerobot
         end
 
         private
+
+        def coerce_vector(value, names = nil)
+          if value.is_a?(Hash)
+            if names && !names.empty?
+              names.map do |k|
+                base = k.to_s.sub(/\.pos\z/, '')
+                (value[k] || value[k.to_sym] || value[base] || value[base.to_sym] || 0.0).to_f
+              end
+            else
+              value.values.map(&:to_f)
+            end
+          else
+            Array(value).map(&:to_f)
+          end
+        end
 
         def task_index(task)
           @task_map[task] ||= @task_map.size
@@ -168,9 +196,19 @@ module Lerobot
           video_path
         end
 
+        def infer_dimension(key, names)
+          @all_frames.first&.dig(key)&.size || names&.size || 1
+        end
+
         def write_info_json
-          action_size = @all_frames.first&.dig(:action)&.size || 2
-          state_size = @all_frames.first&.dig(:state)&.size || 2
+          action_size = infer_dimension(:action, @action_names)
+          state_size = infer_dimension(:state, @state_names)
+
+          action_feature = { "dtype" => "float32", "shape" => [action_size] }
+          action_feature["names"] = @action_names if @action_names && @action_names.size == action_size
+
+          state_feature = { "dtype" => "float32", "shape" => [state_size] }
+          state_feature["names"] = @state_names if @state_names && @state_names.size == state_size
 
           info = {
             codebase_version: "v3.0",
@@ -188,8 +226,8 @@ module Lerobot
               "episode_index" => { "dtype" => "int64", "shape" => [1] },
               "frame_index" => { "dtype" => "int64", "shape" => [1] },
               "task_index" => { "dtype" => "int64", "shape" => [1] },
-              "action" => { "dtype" => "float32", "shape" => [action_size] },
-              "state" => { "dtype" => "float32", "shape" => [state_size] },
+              "action" => action_feature,
+              "state" => state_feature,
               "timestamp" => { "dtype" => "float32", "shape" => [1] },
               "rgb" => { "dtype" => "video", "shape" => [480, 640, 3], "names" => ["height", "width", "channel"] }
             },
@@ -213,9 +251,53 @@ module Lerobot
           Parquet.write_rows(rows, schema: schema, write_to: parquet_path)
         end
 
+        def compute_vector_stats(key, dim)
+          total_frames = @all_frames.size
+          if total_frames.zero?
+            return {
+              "mean" => Array.new(dim, 0.0),
+              "std" => Array.new(dim, 1.0),
+              "min" => Array.new(dim, -1.0),
+              "max" => Array.new(dim, 1.0),
+              "count" => 0
+            }
+          end
+
+          means = Array.new(dim, 0.0)
+          stds = Array.new(dim, 1.0)
+          mins = Array.new(dim, Float::INFINITY)
+          maxs = Array.new(dim, -Float::INFINITY)
+
+          @all_frames.each do |f|
+            vec = f[key] || []
+            dim.times do |i|
+              v = vec.fetch(i, 0.0).to_f
+              means[i] += v
+              mins[i] = v if v < mins[i]
+              maxs[i] = v if v > maxs[i]
+            end
+          end
+
+          dim.times { |i| means[i] /= total_frames.to_f }
+
+          dim.times do |i|
+            variance = @all_frames.sum { |f| ((f[key].fetch(i, 0.0).to_f - means[i])**2) } / total_frames.to_f
+            sd = Math.sqrt(variance)
+            stds[i] = sd > 1e-6 ? sd : 1.0
+          end
+
+          {
+            "mean" => means,
+            "std" => stds,
+            "min" => mins,
+            "max" => maxs,
+            "count" => total_frames
+          }
+        end
+
         def write_stats_json
-          action_size = @all_frames.first&.dig(:action)&.size || 2
-          state_size = @all_frames.first&.dig(:state)&.size || 2
+          action_size = infer_dimension(:action, @action_names)
+          state_size = infer_dimension(:state, @state_names)
           total_frames = @all_frames.size
 
           stats = {
@@ -247,20 +329,8 @@ module Lerobot
               "max" => [1],
               "count" => total_frames
             },
-            "action" => {
-              "mean" => Array.new(action_size, 0.0),
-              "std" => Array.new(action_size, 1.0),
-              "min" => Array.new(action_size, -1.0),
-              "max" => Array.new(action_size, 1.0),
-              "count" => total_frames
-            },
-            "state" => {
-              "mean" => Array.new(state_size, 0.0),
-              "std" => Array.new(state_size, 1.0),
-              "min" => Array.new(state_size, -1.0),
-              "max" => Array.new(state_size, 1.0),
-              "count" => total_frames
-            },
+            "action" => compute_vector_stats(:action, action_size),
+            "state" => compute_vector_stats(:state, state_size),
             "timestamp" => {
               "mean" => [0.0],
               "std" => [1.0],

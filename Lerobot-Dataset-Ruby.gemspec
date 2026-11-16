@@ -2,12 +2,12 @@
 
 Gem::Specification.new do |spec|
   spec.name = "Lerobot-Dataset-Ruby"
-  spec.version = "1.0.1"
+  spec.version = "1.1.0"
   spec.authors = ["PaisyaluAI"]
-  spec.email = ["h9265768hello@gmail.com"]
+  spec.email = ["spring.u.develop@gmail.com"]
 
-  spec.summary = "LeRobot dataset v3 reader and writer library for Ruby"
-  spec.description = "A Ruby gem for reading and recording robotic dataset in LeRobot v3.0 format using OpenCV and Parquet."
+  spec.summary = "LeRobot dataset v3 reader, writer, and SO-101 arm library for Ruby"
+  spec.description = "A Ruby gem for reading and recording robotic datasets (4WD / SO-101 6-DOF arm) in LeRobot v3.0 format using OpenCV and Parquet."
   spec.homepage = "https://github.com/paisyaluAI/lerobot-dataset-ruby"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.2.0"
@@ -19,12 +19,14 @@ Gem::Specification.new do |spec|
   # Specify which files should be added to the gem when it is released.
   # The `git ls-files -z` loads the files in the RubyGem that have been added into git.
   gemspec = File.basename(__FILE__)
-  spec.files = IO.popen(%w[git ls-files -z], chdir: __dir__, err: IO::NULL) do |ls|
-    ls.readlines("\x0", chomp: true).reject do |f|
-      (f == gemspec) ||
-        f.start_with?(*%w[bin/ Gemfile .gitignore .github/]) ||
-        f.end_with?(".mp4", ".o", ".so", "Makefile", "mkmf.log", "extconf.h")
-    end
+  git_files = IO.popen(%w[git ls-files -z], chdir: __dir__, err: IO::NULL) do |ls|
+    ls.readlines("\x0", chomp: true).select { |f| File.file?(File.join(__dir__, f)) }
+  end
+  lib_files = Dir.chdir(__dir__) { Dir.glob("lib/**/*").select { |f| File.file?(f) } }
+  spec.files = (git_files | lib_files).reject do |f|
+    (f == gemspec) ||
+      f.start_with?(*%w[bin/ Gemfile .gitignore .github/]) ||
+      f.end_with?(".mp4", ".o", ".so", "Makefile", "mkmf.log", "extconf.h")
   end
   spec.bindir = "exe"
   spec.executables = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }

@@ -92,4 +92,28 @@ class TestLeRobotDatasetReader < Minitest::Test
 
     assert_equal [0, 1, 3], reader.each_frame.map { |frame| frame['frame_index'] }
   end
+
+  def test_arbitrary_dimension_vectors_and_names
+    multi_root = Dir.mktmpdir('lerobot-nd-test-')
+    names = %w[shoulder_pan.pos shoulder_lift.pos elbow_flex.pos wrist_flex.pos wrist_roll.pos gripper.pos]
+    writer = Lerobot::Dataset::Ruby::Writer.new(
+      output_dir: multi_root,
+      fps: 10,
+      action_names: names,
+      state_names: names
+    )
+
+    vec = [10.0, -20.0, 30.0, -15.0, 45.0, 80.0]
+    writer.start_episode(task: 'Grab the cube')
+    writer.add_frame(action: vec, state: vec, timestamp: 0.0)
+    writer.save_episode
+    writer.save
+
+    reader = Lerobot::Dataset::Ruby::Reader.new(multi_root)
+    assert_equal [6], reader.info.dig('features', 'action', 'shape')
+    assert_equal names, reader.info.dig('features', 'action', 'names')
+    assert_equal vec, reader.episode(0)[:frames].first[:action]
+  ensure
+    FileUtils.remove_entry(multi_root) if multi_root && File.directory?(multi_root)
+  end
 end

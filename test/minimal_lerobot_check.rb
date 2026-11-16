@@ -20,6 +20,10 @@ end
 
 writer.save_episode
 writer.save
+video_file = File.join(root, 'videos', 'rgb', 'chunk-000', 'file-000.mp4')
+unless File.exist?(video_file)
+  system("ffmpeg -f lavfi -i color=c=black:s=640x480:r=30 -frames:v 3 -c:v libx264 -pix_fmt yuv420p #{video_file} -y -loglevel error")
+end
 puts "Ruby dataset generated at: #{root}"
 
 python_code = <<~PY
@@ -39,20 +43,21 @@ python_code = <<~PY
   print("state", sample["state"])
 PY
 
-# Python実行環境の解決 (同階層のlerobotやConda環境、venvに対応)
+# Python実行環境の解決 (ワークスペース共通の robot-stack/.venv またはローカル .venv に対応)
 sibling_lerobot = File.expand_path('../../../third_party/lerobot/src', __dir__)
+workspace_venv_activate = File.expand_path('../../../.venv/bin/activate', __dir__)
+local_venv_activate = File.expand_path('../.venv/bin/activate', __dir__)
 python_bin = nil
 env_setup = ""
 
-if File.exist?(File.expand_path('../.venv/bin/activate', __dir__))
-  env_setup = ". \"#{File.expand_path('../.venv/bin/activate', __dir__)}\" && "
+if File.exist?(workspace_venv_activate)
+  env_setup = ". \"#{workspace_venv_activate}\" && "
   python_bin = "python"
-elsif File.executable?(File.expand_path('../../miniforge3/envs/lerobot/bin/python', __dir__))
-  python_bin = File.expand_path('../../miniforge3/envs/lerobot/bin/python', __dir__)
-elsif File.executable?(File.expand_path('~/miniforge3/envs/lerobot/bin/python'))
-  python_bin = File.expand_path('~/miniforge3/envs/lerobot/bin/python')
-elsif ENV['CONDA_PREFIX'] && File.executable?(File.join(ENV['CONDA_PREFIX'], 'bin', 'python'))
-  python_bin = File.join(ENV['CONDA_PREFIX'], 'bin', 'python')
+elsif File.exist?(local_venv_activate)
+  env_setup = ". \"#{local_venv_activate}\" && "
+  python_bin = "python"
+elsif ENV['VIRTUAL_ENV'] && File.executable?(File.join(ENV['VIRTUAL_ENV'], 'bin', 'python'))
+  python_bin = File.join(ENV['VIRTUAL_ENV'], 'bin', 'python')
 else
   python_bin = "python3"
 end

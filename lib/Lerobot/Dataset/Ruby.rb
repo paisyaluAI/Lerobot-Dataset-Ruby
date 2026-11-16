@@ -13,7 +13,7 @@ require_relative "Ruby/writer"
 module Lerobot
   module Dataset
     module Ruby
-      VERSION = "0.2.0"
+      VERSION = "1.0.2"
       class Error < StandardError; end
     end
   end
