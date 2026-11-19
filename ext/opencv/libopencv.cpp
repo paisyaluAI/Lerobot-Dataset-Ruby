@@ -1,8 +1,8 @@
-#include <opencv4/opencv2/videoio.hpp>
-#include <opencv4/opencv2/highgui.hpp>
-#include <opencv4/opencv2/core.hpp>
-#include <opencv4/opencv2/imgcodecs.hpp>
-#include <opencv4/opencv2/imgproc.hpp>
+#include <opencv2/videoio.hpp>
+#include <opencv2/highgui.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
 
 
 #include <ruby.h>
@@ -30,11 +30,21 @@ static VALUE open_camera_source(VALUE self, VALUE source, VALUE width, VALUE hei
     }
 
     camera.release();
-    camera.open(NUM2INT(source));
+    int src = NUM2INT(source);
+    camera.open(src, cv::CAP_V4L2);
+    if (!camera.isOpened()) {
+        camera.open(src);
+    }
+    if (!camera.isOpened() && src == 0) {
+        for (int fallback = 1; fallback <= 4; ++fallback) {
+            camera.open(fallback, cv::CAP_V4L2);
+            if (camera.isOpened()) break;
+        }
+    }
     debug_mode = false;
 
     if (!camera.isOpened()) {
-        rb_raise(rb_eRuntimeError, "カメラの起動に失敗しました。");
+        rb_raise(rb_eRuntimeError, "カメラ (index=%d) の起動に失敗しました。カメラが接続されているか確認してください。", src);
         return Qfalse;
     }
 
@@ -191,7 +201,8 @@ static VALUE show_movie(VALUE self) {
 }
 
 static VALUE waitKey(int delay) {
-    return cv::waitKey(delay);
+    int key = cv::waitKey(delay);
+    return INT2NUM(key);
 }
 
 static VALUE destroy_window(VALUE self) {
@@ -204,7 +215,11 @@ extern "C" {
         return open_mp4_source(self, path);
     }
 
-    static VALUE rb_cam_open(VALUE self, VALUE source, VALUE width, VALUE height) {
+    static VALUE rb_cam_open(int argc, VALUE *argv, VALUE self) {
+        VALUE source, width, height;
+        rb_scan_args(argc, argv, "12", &source, &width, &height);
+        if (NIL_P(width)) width = INT2NUM(640);
+        if (NIL_P(height)) height = INT2NUM(480);
         return open_camera_source(self, source, width, height);
     }
 
@@ -264,7 +279,7 @@ extern "C" {
 
     extern void Init_libopencv(void) {
         VALUE libopencv = rb_define_module("Libopencv");
-        rb_define_singleton_method(libopencv, "cam_open", rb_cam_open, 3);
+        rb_define_singleton_method(libopencv, "cam_open", rb_cam_open, -1);
         rb_define_singleton_method(libopencv, "open_mp4", rb_open_mp4, 1);
         rb_define_singleton_method(libopencv, "start_recording", rb_start_recording, 2);
         rb_define_singleton_method(libopencv, "take_picture", rb_get, 0);
